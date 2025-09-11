@@ -66,7 +66,8 @@ Generate detailed requirements and a plan with tasks:
 ```bash
 codex-spec requirements
 codex-spec plan
-codex-spec plan-summary
+codex-spec plan-summary  # also runs automatically after `plan`
+codex-spec tasks         # list task IDs, titles, phases, status
 ```
 
 Execute a task and track progress:
@@ -99,10 +100,20 @@ codex-spec context-refresh
   - Create the implementation plan and extract tasks to `.codex-specs/<spec>/tasks.json`
 - `execute <task-id>`:
   - Execute an implementation task with context and plan guidance
+  - Sandbox: writes are enabled by default (workspace-write). Use `--read-only` to prevent writes.
+- `tasks`:
+  - List tasks with IDs, titles, phase, and status
 - `execute-phase <phase>`:
   - Execute all tasks in a specific phase
+  - Sandbox: writes enabled by default; pass `--read-only` to prevent writes
 - `status` / `plan-summary`:
   - View progress and plan overview
+
+Notes:
+- Phase names with spaces must be quoted or escaped when running by phase:
+  - macOS/Linux: `codex-spec execute-phase "Core Features"` or `codex-spec execute-phase Core\ Features`
+  - Windows: `codex-spec execute-phase "Core Features"`
+- Spec directory naming: defaults to AI-chosen snake_case slug with date prefix (`YYYY-MM-DD_name_of_the_spec`). Override with `--title "your_slug"`.
 
 ## Project Files
 

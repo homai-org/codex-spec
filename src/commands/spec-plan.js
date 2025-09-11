@@ -60,6 +60,9 @@ ${structure}
     console.log(chalk.green('✅ Implementation plan created'));
     console.log(chalk.cyan(`📋 ${tasks.length} tasks identified`));
     console.log(chalk.cyan('📁 Plan saved to:'), path.join(specDir, 'plan.md'));
+    // Auto-run summary after success
+    const { planSummary } = await import('./spec-status.js');
+    await planSummary();
   } catch (error) {
     console.error(chalk.red('❌ Failed to parse tasks JSON:'), error.message);
     console.log(chalk.yellow('📄 Plan document saved, but task extraction failed'));

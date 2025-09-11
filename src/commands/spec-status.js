@@ -2,11 +2,17 @@ import fs from 'fs-extra';
 import path from 'path';
 import chalk from 'chalk';
 
-export async function checkStatus() {
-  const specDir = '.codex-specs';
-  const tasksPath = path.join(specDir, 'tasks.json');
+function resolveTasksPath() {
+  const current = path.join('.codex-specs', 'current', 'tasks.json');
+  const legacy = path.join('.codex-specs', 'tasks.json');
+  if (fs.existsSync(current)) return current;
+  if (fs.existsSync(legacy)) return legacy;
+  return null;
+}
 
-  if (!await fs.pathExists(tasksPath)) {
+export async function checkStatus() {
+  const tasksPath = resolveTasksPath();
+  if (!tasksPath) {
     console.log(chalk.yellow('No tasks.json found. Generate a plan first.'));
     return;
   }
@@ -31,10 +37,8 @@ export async function checkStatus() {
 }
 
 export async function planSummary() {
-  const specDir = '.codex-specs';
-  const tasksPath = path.join(specDir, 'tasks.json');
-
-  if (!await fs.pathExists(tasksPath)) {
+  const tasksPath = resolveTasksPath();
+  if (!tasksPath) {
     console.log(chalk.yellow('No tasks.json found. Generate a plan first.'));
     return;
   }

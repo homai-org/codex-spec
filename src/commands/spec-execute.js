@@ -5,7 +5,7 @@ import { CodexClient } from '../utils/codex-client.js';
 
 export async function executeTask(taskId, options = {}) {
   const codexClient = new CodexClient();
-  const specDir = '.codex-specs';
+  const specDir = path.join('.codex-specs', 'current');
 
   if (!await fs.pathExists(path.join(specDir, 'tasks.json'))) {
     console.error(chalk.red('❌ No tasks found. Run "codex-spec plan" first.'));
@@ -40,17 +40,45 @@ export async function executeTask(taskId, options = {}) {
     await fs.writeJson(path.join(specDir, 'tasks.json'), tasks, { spaces: 2 });
 
     const result = await codexClient.executeCodexCLI(executionPrompt, {
-      mode: 'code',
-      onProgress: (data) => process.stdout.write(chalk.gray(data))
+      exec: true,
+      onProgress: (data) => process.stdout.write(chalk.gray(data)),
+      sandbox: options.readOnly ? 'read-only' : 'workspace-write'
     });
 
-    console.log(chalk.green('\n✅ Task completed successfully'));
-    console.log(chalk.cyan('📝 Implementation summary:'), result.slice(-200) + '...');
+    // Persist full execution log
+    const logPath = await writeExecutionLog(specDir, task.id, result);
+    const summary = buildTailSummary(result, 12);
+    const changedFiles = extractChangedFiles(result);
 
-    task.status = 'completed';
-    task.completedAt = new Date().toISOString();
-    task.result = result;
-    await fs.writeJson(path.join(specDir, 'tasks.json'), tasks, { spaces: 2 });
+    if (options.readOnly) {
+      console.log(chalk.yellow('\nℹ️ Read-only mode: not marking task as completed.'));
+      printChangedFiles(changedFiles, true);
+      console.log(chalk.cyan('📝 Preview summary:\n') + summary);
+      console.log(chalk.gray(`\n📄 Full log: ${logPath}`));
+      // Revert status back to pending and store preview details
+      task.status = 'pending';
+      task.previewedAt = new Date().toISOString();
+      task.preview = { log: logPath };
+      // Clear any previous error since this run succeeded
+      delete task.error;
+      delete task.failedAt;
+      await fs.writeJson(path.join(specDir, 'tasks.json'), tasks, { spaces: 2 });
+    } else {
+      console.log(chalk.green('\n✅ Task completed successfully'));
+      printChangedFiles(changedFiles, false);
+      console.log(chalk.cyan('📝 Implementation summary:\n') + summary);
+      console.log(chalk.gray(`\n📄 Full log: ${logPath}`));
+      task.status = 'completed';
+      task.completedAt = new Date().toISOString();
+      task.result = { log: logPath };
+      const filesCreated = changedFiles.filter(f => f.action === 'Add').map(f => f.path);
+      const filesUpdated = changedFiles.filter(f => f.action !== 'Add').map(f => f.path);
+      task.artifacts = { filesCreated, filesUpdated, log: logPath };
+      // Clear any previous error since this run succeeded
+      delete task.error;
+      delete task.failedAt;
+      await fs.writeJson(path.join(specDir, 'tasks.json'), tasks, { spaces: 2 });
+    }
   } catch (error) {
     console.error(chalk.red('❌ Task execution failed:'), error.message);
     task.status = 'failed';
@@ -100,8 +128,8 @@ Please provide a complete implementation with all necessary files, tests, and do
 `;
 }
 
-export async function executePhase(phaseName) {
-  const tasks = await fs.readJson('.codex-specs/tasks.json');
+export async function executePhase(phaseName, options = {}) {
+  const tasks = await fs.readJson(path.join('.codex-specs', 'current', 'tasks.json'));
   const phaseTasks = tasks.filter(t => t.phase === phaseName && t.status !== 'completed');
   if (phaseTasks.length === 0) {
     console.log(chalk.yellow(`No pending tasks found for phase: ${phaseName}`));
@@ -109,9 +137,71 @@ export async function executePhase(phaseName) {
   }
   console.log(chalk.blue(`🚀 Executing ${phaseTasks.length} tasks in phase: ${phaseName}`));
   for (const task of phaseTasks) {
-    await executeTask(task.id);
+    await executeTask(task.id, { readOnly: options.readOnly });
   }
   console.log(chalk.green(`✅ Phase "${phaseName}" completed`));
+}
+
+function stripAnsi(input) {
+  return String(input).replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function buildTailSummary(output, maxLines = 12) {
+  const clean = stripAnsi(output);
+  const lines = clean.split(/\r?\n/).filter(Boolean);
+  const noisyPrefixes = ['diff --git', 'index ', '@@', '---', '+++', '*** ', '```', '+', '-'];
+  const filtered = lines.filter(l => !noisyPrefixes.some(p => l.startsWith(p)));
+  const arr = filtered.length > 2 ? filtered : lines; // fallback if over-filtered
+  const tail = arr.slice(-maxLines);
+  return tail.join('\n');
+}
+
+async function writeExecutionLog(specDir, taskId, contents) {
+  const logsDir = path.join(specDir, 'logs');
+  await fs.ensureDir(logsDir);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(logsDir, `${taskId}-${ts}.log`);
+  await fs.writeFile(file, contents);
+  return file;
+}
+
+function extractChangedFiles(output) {
+  const clean = stripAnsi(output);
+  const map = new Map();
+  const re1 = /\*\*\*\s+(Add|Update)\s+File:\s+([^\n]+)/g; // our patch header style
+  const re2 = /File:\s+([^\s]+)\s*$/gm; // generic "File: path" lines, assume Update
+  let m;
+  while ((m = re1.exec(clean)) !== null) {
+    const action = m[1].trim();
+    const p = m[2].trim();
+    const prev = map.get(p);
+    if (!prev || prev.action !== 'Add') {
+      map.set(p, { action, path: p });
+    }
+  }
+  while ((m = re2.exec(clean)) !== null) {
+    const p = m[1].trim();
+    if (p && !p.startsWith('http') && !map.has(p)) {
+      map.set(p, { action: 'Update', path: p });
+    }
+  }
+  return Array.from(map.values());
+}
+
+function printChangedFiles(changedFiles, isPreview) {
+  if (!changedFiles || changedFiles.length === 0) return;
+  const created = changedFiles.filter(f => f.action === 'Add').map(f => f.path);
+  const updated = changedFiles.filter(f => f.action !== 'Add').map(f => f.path);
+  const title = isPreview ? '🗂️ Files changed (preview):' : '🗂️ Files changed:';
+  console.log(chalk.cyan(title));
+  if (created.length > 0) {
+    console.log(chalk.green('  + Created:'));
+    created.forEach(p => console.log('    ' + p));
+  }
+  if (updated.length > 0) {
+    console.log(chalk.blue('  ~ Updated:'));
+    updated.forEach(p => console.log('    ' + p));
+  }
 }
 
 

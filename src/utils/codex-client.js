@@ -3,19 +3,35 @@ import OpenAI from 'openai';
 
 export class CodexClient {
   constructor() {
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    // Lazy-init OpenAI client only when API generation is requested
+    this.openai = null;
   }
 
   async executeCodexCLI(prompt, options = {}) {
     return new Promise((resolve, reject) => {
-      const args = ['--mode', options.mode || 'suggest'];
-      if (options.autoApprove) args.push('--auto-approve');
-      if (options.verbose) args.push('--verbose');
+      // Use non-interactive exec mode by default: `codex exec "<prompt>"`
+      const args = [];
+      if (options.model) {
+        args.push('--model', options.model);
+      }
+      if (options.image) {
+        args.push('-i', options.image);
+      }
+      if (options.exec === false) {
+        // Direct prompt form: `codex "<prompt>"`
+        args.push(String(prompt));
+      } else {
+        // Exec form
+        args.push('exec', String(prompt));
+      }
+
+      // Sandbox permissions
+      if (options.sandbox) {
+        args.push('-s', options.sandbox);
+      }
 
       const codex = spawn('codex', args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         cwd: options.cwd || process.cwd()
       });
 
@@ -35,13 +51,15 @@ export class CodexClient {
         if (code === 0) resolve(output);
         else reject(new Error(`Codex CLI failed (exit code ${code}): ${error}`));
       });
-
-      codex.stdin.write(prompt);
-      codex.stdin.end();
     });
   }
 
   async generateWithAPI(prompt, systemMessage, options = {}) {
+    if (!this.openai) {
+      this.openai = new OpenAI({
+        apiKey: options.apiKey || process.env.OPENAI_API_KEY
+      });
+    }
     const model = options.model || 'gpt-4';
     const temperature = options.temperature || 0.3;
     const maxTokens = options.maxTokens || 4000;

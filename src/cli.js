@@ -42,6 +42,7 @@ program
 program
   .command('create <feature-name> [description]')
   .description('Create a new feature specification')
+  .option('--title <title>', 'Override AI-chosen spec directory title')
   .action(createSpec);
 
 program
@@ -57,6 +58,7 @@ program
 program
   .command('execute <task-id>')
   .description('Execute specific task with Codex')
+  .option('--read-only', 'Run in read-only sandbox (no file writes)')
   .action(executeTask);
 
 program
@@ -64,16 +66,28 @@ program
   .description('Check project status')
   .action(checkStatus);
 
+program
+  .command('tasks')
+  .description('List tasks with IDs, titles, phase, and status')
+  .action(async () => {
+    const { listTasks } = await import('./commands/spec-tasks.js');
+    await listTasks();
+  });
+
 // Advanced Commands
 program
   .command('execute-phase <phase-name>')
   .description('Execute all tasks in a specific phase')
+  .option('--read-only', 'Run in read-only sandbox (no file writes)')
   .action(executePhase);
 
 program
   .command('plan-summary')
   .description('Show implementation plan overview')
   .action(planSummary);
+
+// Add a helpful hint in the global help output for phase names with spaces
+program.addHelpText('afterAll', `\nNotes:\n  - If a phase name contains spaces, quote or escape it.\n    macOS/Linux: codex-spec execute-phase "Core Features"  OR  codex-spec execute-phase Core\\ Features\n    Windows:     codex-spec execute-phase "Core Features"\n`);
 
 program.parse();
 
